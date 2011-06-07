@@ -30,6 +30,9 @@
 # include <priv.h>
 #endif
 
+#include "md5.h"
+#define MD5_DIGEST_ALIGN 4
+
 #include "system.h"
 #include "acl.h"
 #include "backupfile.h"
@@ -147,8 +150,17 @@ sparse_copy (int src_fd, int dest_fd, char *buf, size_t buf_size,
              bool make_holes,
              char const *src_name, char const *dst_name,
              uintmax_t max_n_read, off_t *total_n_read,
-             bool *last_write_made_hole)
+             bool *last_write_made_hole, bool calc_md5, unsigned char *md5_buffer)
 {
+
+
+  /* MD5 generation */
+  struct md5_ctx ctx;
+  if (calc_md5) {
+    /* Initialize the computation context.  */
+    md5_init_ctx (&ctx);
+  }
+
   typedef uintptr_t word;
   *last_write_made_hole = false;
   *total_n_read = 0;
@@ -158,6 +170,7 @@ sparse_copy (int src_fd, int dest_fd, char *buf, size_t buf_size,
       word *wp = NULL;
 
       ssize_t n_read = read (src_fd, buf, MIN (max_n_read, buf_size));
+
       if (n_read < 0)
         {
           if (errno == EINTR)
@@ -167,6 +180,12 @@ sparse_copy (int src_fd, int dest_fd, char *buf, size_t buf_size,
         }
       if (n_read == 0)
         break;
+
+      if (calc_md5) {
+        /* MD5 checksum while copying */
+        md5_process_bytes (buf, n_read, &ctx);
+      }
+
       max_n_read -= n_read;
       *total_n_read += n_read;
 
@@ -229,6 +248,11 @@ sparse_copy (int src_fd, int dest_fd, char *buf, size_t buf_size,
              file.  Unfortunately that doesn't work for certain files in
              /proc with linux kernels from at least 2.6.9 .. 2.6.29.  */
         }
+    }
+
+    if (calc_md5) { 
+      /* Put result in desired memory area.  */
+      md5_finish_ctx (&ctx, md5_buffer);
     }
 
   return true;
@@ -297,7 +321,7 @@ static bool
 extent_copy (int src_fd, int dest_fd, char *buf, size_t buf_size,
              off_t src_total_size, enum Sparse_type sparse_mode,
              char const *src_name, char const *dst_name,
-             bool *require_normal_copy)
+             bool *require_normal_copy, bool calc_md5, unsigned char *md5_buffer)
 {
   struct extent_scan scan;
   off_t last_ext_start = 0;
@@ -417,7 +441,7 @@ extent_copy (int src_fd, int dest_fd, char *buf, size_t buf_size,
               if ( ! sparse_copy (src_fd, dest_fd, buf, buf_size,
                                   sparse_mode == SPARSE_ALWAYS,
                                   src_name, dst_name, ext_len, &n_read,
-                                  &wrote_hole_at_eof))
+                                  &wrote_hole_at_eof, calc_md5, md5_buffer))
                 goto fail;
 
               dest_pos = ext_start + n_read;
@@ -802,6 +826,10 @@ copy_reg (char const *src_name, char const *dst_name,
   char *buf;
   char *buf_alloc = NULL;
   char *name_alloc = NULL;
+  unsigned char md5_buffer_unaligned[MD5_DIGEST_SIZE + MD5_DIGEST_ALIGN];
+  /* Make sure bin_buffer is properly aligned. */
+  unsigned char *md5_buffer = ptr_align (md5_buffer_unaligned, MD5_DIGEST_ALIGN);
+
   int dest_desc;
   int dest_errno;
   int source_desc;
@@ -975,7 +1003,7 @@ copy_reg (char const *src_name, char const *dst_name,
           if (!clone_ok)
             {
               error (0, errno, _("failed to clone %s from %s"),
-                     quote_n (0, dst_name), quote_n (1, src_name));
+                     quote (dst_name), quote (src_name));
               return_val = false;
               goto close_src_and_dst_desc;
             }
@@ -1051,7 +1079,7 @@ copy_reg (char const *src_name, char const *dst_name,
           if (extent_copy (source_desc, dest_desc, buf, buf_size,
                            src_open_sb.st_size,
                            S_ISREG (sb.st_mode) ? x->sparse_mode : SPARSE_NEVER,
-                           src_name, dst_name, &normal_copy_required))
+                           src_name, dst_name, &normal_copy_required, x->md5, md5_buffer))
             goto preserve_metadata;
 
           if (! normal_copy_required)
@@ -1066,7 +1094,7 @@ copy_reg (char const *src_name, char const *dst_name,
       if ( ! sparse_copy (source_desc, dest_desc, buf, buf_size,
                           make_holes, src_name, dst_name,
                           UINTMAX_MAX, &n_read,
-                          &wrote_hole_at_eof)
+                          &wrote_hole_at_eof, x->md5, md5_buffer)
            || (wrote_hole_at_eof &&
                ftruncate (dest_desc, n_read) < 0))
         {
@@ -1075,6 +1103,7 @@ copy_reg (char const *src_name, char const *dst_name,
           goto close_src_and_dst_desc;
         }
     }
+
 
 preserve_metadata:
   if (x->preserve_timestamps)
@@ -1169,6 +1198,14 @@ close_src_desc:
 
   free (buf_alloc);
   free (name_alloc);
+
+  if (x->md5) {
+    for (int i = 0; i < (MD5_DIGEST_SIZE+1 / 2); ++i)
+      printf ("%02x", md5_buffer[i]);
+    printf("  %s\n", src_name);
+  }
+
+
   return return_val;
 }
 

@@ -234,6 +234,9 @@ struct cp_options
   /* If true, display the names of the files before copying them. */
   bool verbose;
 
+  /* If true, calculate and print out MD5 checksums of each input file */
+  bool md5;
+
   /* If true, stdin is a tty.  */
   bool stdin_tty;
 

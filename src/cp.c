@@ -141,6 +141,7 @@ static struct option const long_opts[] =
   {"target-directory", required_argument, NULL, 't'},
   {"update", no_argument, NULL, 'u'},
   {"verbose", no_argument, NULL, 'v'},
+  {"md5", no_argument, NULL, 'm'},
   {GETOPT_HELP_OPTION_DECL},
   {GETOPT_VERSION_OPTION_DECL},
   {NULL, 0, NULL, 0}
@@ -193,6 +194,8 @@ Mandatory arguments to long options are mandatory for short options too.\n\
       fputs (_("\
   -n, --no-clobber             do not overwrite an existing file (overrides\n\
                                  a previous -i option)\n\
+  -m                           calculate MD5 checksums of input files while\n\
+                                 copying and print it on the screen.\n\
   -P, --no-dereference         never follow symbolic links in SOURCE\n\
 "), stdout);
       fputs (_("\
@@ -803,6 +806,7 @@ cp_option_init (struct cp_options *x)
 
   x->update = false;
   x->verbose = false;
+  x->md5 = false;
 
   /* By default, refuse to open a dangling destination symlink, because
      in general one cannot do that safely, give the current semantics of
@@ -933,7 +937,7 @@ main (int argc, char **argv)
      we'll actually use backup_suffix_string.  */
   backup_suffix_string = getenv ("SIMPLE_BACKUP_SUFFIX");
 
-  while ((c = getopt_long (argc, argv, "abdfHilLnprst:uvxPRS:T",
+  while ((c = getopt_long (argc, argv, "abdfHilLnmprst:uvxPRS:T",
                            long_opts, NULL))
          != -1)
     {
@@ -1008,6 +1012,10 @@ main (int argc, char **argv)
 
         case 'n':
           x.interactive = I_ALWAYS_NO;
+          break;
+
+        case 'm':
+          x.md5 = true;
           break;
 
         case 'P':
